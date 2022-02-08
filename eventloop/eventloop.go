@@ -11,6 +11,7 @@ type EventLoop struct {
 }
 
 func NewEventLoop(sockFd int) (*EventLoop, error) {
+	// syscall.Kqueue creates a new kqueue and returns its file descriptor
 	kqueueFd, err := syscall.Kqueue()
 	if err != nil {
 		return nil, err
@@ -18,12 +19,18 @@ func NewEventLoop(sockFd int) (*EventLoop, error) {
 
 	loop := &EventLoop{kqueueFd: kqueueFd, sockFd: sockFd}
 
+	// syscall.Kevent_t is a struct that is used for creating a new event
+	// Ident: the file desciptor for which are registering the event
+	// Filter: marks the event for which we want to listen, we can register multiple filters by ORing them
+	// Flags: tells the kqueue what we want to do with the event, for example we are telling the kqueue to add and enable the event
 	socketEvent := syscall.Kevent_t{
 		Ident:  uint64(loop.sockFd),
 		Filter: syscall.EVFILT_READ,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE,
 	}
 
+	// syscall.Kevent is used for both polling and registering events
+	// We pass the fd for the kqueue and list of events we want to register
 	r, err := syscall.Kevent(loop.kqueueFd, []syscall.Kevent_t{socketEvent}, nil, nil)
 
 	if err != nil {
@@ -39,12 +46,17 @@ func NewEventLoop(sockFd int) (*EventLoop, error) {
 
 func (e *EventLoop) Start() {
 	for {
+		// create an empty slice, this receives all the events that are ready to be processed
 		events := make([]syscall.Kevent_t, 1)
+		// Here we are using syscall.Kevent to poll for events
+		// it populates the events slice and returns the number of events populated
 		numEvents, err := syscall.Kevent(e.kqueueFd, nil, events, nil)
 
 		if err != nil {
 			continue
 		}
+
+		// loop over the events and process them
 		for i := 0; i < numEvents; i++ {
 			event := events[i]
 			eventFd := int(event.Ident)
@@ -55,8 +67,6 @@ func (e *EventLoop) Start() {
 			} else if eventFd == e.sockFd {
 				// we received an event on the socket,
 				// which means a new connection arrived, so we accept the new connection and add it to the kqueue
-
-				// first we create a new fd for the new connection
 				sockFd, _, err := syscall.Accept(eventFd)
 				if err != nil {
 					continue
